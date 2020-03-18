@@ -24,30 +24,45 @@ import android.os.CancellationSignal
 import android.service.autofill.*
 import androidx.annotation.RequiresApi
 import android.util.Log
+import android.view.View
 import android.widget.RemoteViews
 import com.kunzisoft.keepass.R
 
 @RequiresApi(api = Build.VERSION_CODES.O)
 class KeeAutofillService : AutofillService() {
 
-    override fun onFillRequest(request: FillRequest, cancellationSignal: CancellationSignal,
+    override fun onFillRequest(request: FillRequest,
+                               cancellationSignal: CancellationSignal,
                                callback: FillCallback) {
         val fillContexts = request.fillContexts
         val latestStructure = fillContexts[fillContexts.size - 1].structure
 
-        cancellationSignal.setOnCancelListener { Log.e(TAG, "Cancel autofill not implemented in this sample.") }
+        // TODO Package filter
+        /*
+        if (!PackageVerifier.isValidPackage(applicationContext,
+                        latestStructure.activityComponent.packageName)) {
+            return
+        }
+        */
+
+        cancellationSignal.setOnCancelListener { Log.e(TAG, "Cancel autofill not implemented.") }
 
         val responseBuilder = FillResponse.Builder()
         // Check user's settings for authenticating Responses and Datasets.
-        val parseResult = StructureParser(latestStructure).parse()
-        parseResult?.allAutofillIds()?.let { autofillIds ->
-            if (listOf(*autofillIds).isNotEmpty()) {
-                // If the entire Autofill Response is authenticated, AuthActivity is used
-                // to generate Response.
-                val sender = AutofillLauncherActivity.getAuthIntentSenderForResponse(this)
-                val presentation = RemoteViews(packageName, R.layout.item_autofill_service_unlock)
-                responseBuilder.setAuthentication(autofillIds, sender, presentation)
-                callback.onSuccess(responseBuilder.build())
+        val parser = StructureParser(latestStructure).apply {
+            parseForFill()
+        }
+
+        if (parser.autofillFields.allAutofillHints.contains(View.AUTOFILL_HINT_PASSWORD)) {
+            parser.autofillFields.autofillIds.let { autofillIds ->
+                if (autofillIds.isNotEmpty()) {
+                    // If the entire Autofill Response is authenticated, AuthActivity is used
+                    // to generate Response.
+                    val sender = AutofillLauncherActivity.getAuthIntentSenderForResponse(this)
+                    val presentation = RemoteViews(packageName, R.layout.item_autofill_service_unlock)
+                    responseBuilder.setAuthentication(autofillIds.toTypedArray(), sender, presentation)
+                    callback.onSuccess(responseBuilder.build())
+                }
             }
         }
     }

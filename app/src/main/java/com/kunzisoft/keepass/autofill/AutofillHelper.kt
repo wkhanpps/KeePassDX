@@ -28,13 +28,12 @@ import android.service.autofill.Dataset
 import android.service.autofill.FillResponse
 import androidx.annotation.RequiresApi
 import android.util.Log
+import android.view.View
 import android.view.autofill.AutofillManager
-import android.view.autofill.AutofillValue
 import android.widget.RemoteViews
 import com.kunzisoft.keepass.R
 import com.kunzisoft.keepass.activities.helpers.EntrySelectionHelper
 import com.kunzisoft.keepass.model.EntryInfo
-import java.util.*
 
 
 @RequiresApi(api = Build.VERSION_CODES.O)
@@ -56,30 +55,27 @@ object AutofillHelper {
             return String.format("%s (%s)", entryInfo.title, entryInfo.username)
         if (entryInfo.title.isNotEmpty())
             return entryInfo.title
-        if (entryInfo.username.isNotEmpty())
-            return entryInfo.username
         if (entryInfo.url.isNotEmpty())
             return entryInfo.url
+        if (entryInfo.username.isNotEmpty())
+            return entryInfo.username
         return ""
     }
 
     private fun buildDataset(context: Context,
                              entryInfo: EntryInfo,
-                             struct: StructureParser.Result): Dataset? {
-        val title = makeEntryTitle(entryInfo)
-        val views = newRemoteViews(context.packageName, title)
-        val builder = Dataset.Builder(views)
-        builder.setId(entryInfo.id)
-
-        struct.password.forEach { id -> builder.setValue(id, AutofillValue.forText(entryInfo.password)) }
-
-        val ids = ArrayList(struct.username)
-        if (entryInfo.username.contains("@") || struct.username.isEmpty())
-            ids.addAll(struct.email)
-        ids.forEach { id -> builder.setValue(id, AutofillValue.forText(entryInfo.username)) }
-
+                             autofillFieldMetadata: AutofillFieldMetadataCollection,
+                             filledAutofillFieldCollection: FilledAutofillFieldCollection): Dataset? {
+        val datasetBuilder = Dataset.Builder(newRemoteViews(context.packageName, makeEntryTitle(entryInfo)))
+        // TODO Authentication builder.setAuthentication()
         return try {
-            builder.build()
+            val setValueAtLeastOnce = filledAutofillFieldCollection
+                    .applyToFields(autofillFieldMetadata, datasetBuilder)
+            if (setValueAtLeastOnce) {
+                datasetBuilder.build()
+            } else {
+                null
+            }
         } catch (e: IllegalArgumentException) {
             // if not value be set
             null
@@ -89,15 +85,23 @@ object AutofillHelper {
     /**
      * Method to hit when right key is selected
      */
-    fun buildResponseWhenEntrySelected(activity: Activity, entryInfo: EntryInfo) {
+    fun buildResponseWhenEntrySelected(activity: Activity,
+                                       entryInfo: EntryInfo) {
         var setResultOk = false
         activity.intent?.extras?.let { extras ->
             if (extras.containsKey(ASSIST_STRUCTURE)) {
                 activity.intent?.getParcelableExtra<AssistStructure>(ASSIST_STRUCTURE)?.let { structure ->
-                    StructureParser(structure).parse()?.let { result ->
-                        // New Response
-                        val responseBuilder = FillResponse.Builder()
-                        val dataset = buildDataset(activity, entryInfo, result)
+                    // New Response
+                    val responseBuilder = FillResponse.Builder()
+                    val parser = StructureParser(structure)
+                    parser.parseForFill()
+                    val autofillFields = parser.autofillFields
+                    val filledAutofillFieldCollection = FilledAutofillFieldCollection()
+                    filledAutofillFieldCollection.add(entryInfo)
+                    buildDataset(activity,
+                            entryInfo,
+                            autofillFields,
+                            filledAutofillFieldCollection)?.let { dataset ->
                         responseBuilder.addDataset(dataset)
                         val mReplyIntent = Intent()
                         Log.d(activity.javaClass.name, "Successed Autofill auth.")
@@ -144,5 +148,16 @@ object AutofillHelper {
         val presentation = RemoteViews(packageName, R.layout.item_autofill_service)
         presentation.setTextViewText(R.id.text, remoteViewsText)
         return presentation
+    }
+
+    fun isValidHint(hint: String): Boolean {
+        return when (hint) {
+            View.AUTOFILL_HINT_EMAIL_ADDRESS,
+            View.AUTOFILL_HINT_PASSWORD,
+            View.AUTOFILL_HINT_USERNAME ->
+                true
+            else ->
+                false
+        }
     }
 }

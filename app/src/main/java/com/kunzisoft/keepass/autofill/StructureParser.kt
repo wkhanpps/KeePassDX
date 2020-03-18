@@ -20,90 +20,54 @@ package com.kunzisoft.keepass.autofill
 
 import android.app.assist.AssistStructure
 import android.os.Build
-import androidx.annotation.RequiresApi
-import android.text.InputType
 import android.util.Log
-import android.view.View
-import android.view.autofill.AutofillId
-import java.util.*
+import androidx.annotation.RequiresApi
 
 
 /**
  * Parse AssistStructure and guess username and password fields.
  */
 @RequiresApi(api = Build.VERSION_CODES.O)
-internal class StructureParser(private val structure: AssistStructure) {
-    private var result: Result? = null
-    private var usernameCandidate: AutofillId? = null
+internal class StructureParser(private val autofillStructure: AssistStructure) {
 
-    fun parse(): Result? {
-        result = Result()
-        result?.apply {
-            usernameCandidate = null
-            for (i in 0 until structure.windowNodeCount) {
-                val windowNode = structure.getWindowNodeAt(i)
-                title.add(windowNode.title)
-                windowNode.rootViewNode.webDomain?.let {
-                    webDomain.add(it)
-                }
-                parseViewNode(windowNode.rootViewNode)
-            }
-            // If not explicit username field found, add the field just before password field.
-            if (username.isEmpty() && email.isEmpty()
-                    && password.isNotEmpty() && usernameCandidate != null)
-                username.add(usernameCandidate!!)
-        }
+    val autofillFields = AutofillFieldMetadataCollection()
+    var filledAutofillFieldCollection: FilledAutofillFieldCollection = FilledAutofillFieldCollection()
+        private set
 
-        return result
+    fun parseForFill() {
+        parse(true)
     }
 
-    private fun parseViewNode(node: AssistStructure.ViewNode) {
-        val hints = node.autofillHints
-        val autofillId = node.autofillId
-        if (autofillId != null) {
-            if (hints != null && hints.isNotEmpty()) {
-                when {
-                    Arrays.stream(hints).anyMatch { View.AUTOFILL_HINT_USERNAME == it } -> result?.username?.add(autofillId)
-                    Arrays.stream(hints).anyMatch { View.AUTOFILL_HINT_EMAIL_ADDRESS == it } -> result?.email?.add(autofillId)
-                    Arrays.stream(hints).anyMatch { View.AUTOFILL_HINT_PASSWORD == it } -> result?.password?.add(autofillId)
-                    else -> Log.d(TAG, "unsupported hints")
-                }
-            } else if (node.autofillType == View.AUTOFILL_TYPE_TEXT) {
-                val inputType = node.inputType
-                when {
-                    inputType and InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS > 0 -> result?.email?.add(autofillId)
-                    inputType and InputType.TYPE_TEXT_VARIATION_PASSWORD > 0 -> result?.password?.add(autofillId)
-                    result?.password?.isEmpty() == true -> usernameCandidate = autofillId
+    fun parseForSave() {
+        parse(false)
+    }
+
+    /**
+     * Traverse AssistStructure and add ViewNode metadata to a flat list.
+     */
+    private fun parse(forFill: Boolean) {
+        Log.d(TAG, "Parsing structure for " + autofillStructure.activityComponent)
+        val nodes = autofillStructure.windowNodeCount
+        filledAutofillFieldCollection = FilledAutofillFieldCollection()
+        for (i in 0 until nodes) {
+            parseLocked(forFill, autofillStructure.getWindowNodeAt(i).rootViewNode)
+        }
+    }
+
+    private fun parseLocked(forFill: Boolean, viewNode: AssistStructure.ViewNode) {
+        viewNode.autofillHints?.let { autofillHints ->
+            if (autofillHints.isNotEmpty()) {
+                if (forFill) {
+                    autofillFields.add(AutofillFieldMetadata(viewNode))
+                } else {
+                    // TODO Autofill parse save
+                    //  filledAutofillFieldCollection.add(FilledAutofillField(viewNode))
                 }
             }
         }
-
-        for (i in 0 until node.childCount)
-            parseViewNode(node.getChildAt(i))
-    }
-
-    @RequiresApi(api = Build.VERSION_CODES.O)
-    internal class Result {
-        val title: MutableList<CharSequence>
-        val webDomain: MutableList<String>
-        val username: MutableList<AutofillId>
-        val email: MutableList<AutofillId>
-        val password: MutableList<AutofillId>
-
-        init {
-            title = ArrayList()
-            webDomain = ArrayList()
-            username = ArrayList()
-            email = ArrayList()
-            password = ArrayList()
-        }
-
-        fun allAutofillIds(): Array<AutofillId> {
-            val all = ArrayList<AutofillId>()
-            all.addAll(username)
-            all.addAll(email)
-            all.addAll(password)
-            return all.toTypedArray()
+        val childrenSize = viewNode.childCount
+        for (i in 0 until childrenSize) {
+            parseLocked(forFill, viewNode.getChildAt(i))
         }
     }
 
